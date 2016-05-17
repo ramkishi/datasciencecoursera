@@ -1,0 +1,172 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Ram Prashad Kisi"
+date: "May 16, 2016"
+output: html_document
+---
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+## Loading Data 
+
+Loading the required machine learning library: 
+
+```{r}
+library(caret)
+library(randomForest)
+library(e1071)
+```
+
+
+The training and testing data are loaded from given link as:
+
+```{r}
+if (!file.exists("./data/pml-training.csv")) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "./data/pml-training.csv")
+}
+if (!file.exists("./data/pml-testing.csv")) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "./data/pml-testing.csv")
+}
+testing <- read.csv("./data/pml-testing.csv", sep = ",", na.strings = c("", "NA"))
+training <- read.csv("./data/pml-training.csv", sep = ",", na.strings = c("", "NA"))
+
+dim(testing)
+dim(training)
+```
+
+## Cleaning Data 
+
+Keeping just column of interest only from column 8 to 59 as :
+```{r}
+# Remove columns full of NAs and first 7 features (column) as they are time-series from testing 
+features <- names(testing[,colSums(is.na(testing)) == 0])[8:59]
+# Only use features used in test cases.
+training <- training[,c(features,"classe")]
+testing <- testing[,c(features,"problem_id")]
+
+dim(testing)
+dim(training)
+```
+
+## Partitioning Training Data
+
+Partitioning Training data into 75% training data and 25% testing data for testing after model is constructed.
+```{r}
+#### seed for reproducibility
+set.seed(1024)
+into_Train = createDataPartition(training$classe, p = 0.75, list = F)
+sub_training = training[into_Train,]
+sub_testing = training[-into_Train,]
+
+dim(sub_training)
+dim(sub_testing)
+```
+
+## Feature Selection
+
+Feature that are highly correlated about (>90%) are dropped.
+
+```{r}
+outcome = which(names(sub_training) == "classe")
+highCorrCols = findCorrelation(abs(cor(sub_training[,-outcome])),0.90)
+sub_training = sub_training[,-highCorrCols]
+outcome = which(names(sub_training) == "classe")
+```
+
+The highly correlated features are :
+```{r}
+highly_Correlated_Features = names(sub_training)[highCorrCols]
+highly_Correlated_Features
+
+#### the dimension of sub_training after dropping these features
+dim(sub_training)
+```
+
+## Feature Importance using Random Forest
+
+Discovering important features using Random Forest as random forest method reduces overfitting and is good for nonlinear features. The important 4 features are plotted
+
+```{r}
+fsRF = randomForest(sub_training[,-outcome], sub_training[,outcome], importance = T)
+rfImp = data.frame(fsRF$importance)
+impFeatures = order(-rfImp$MeanDecreaseGini)
+inImp = createDataPartition(sub_training$classe, p = 0.05, list = F)
+featurePlot(sub_training[inImp,impFeatures[1:4]],sub_training$classe[inImp], plot = "pairs")
+```
+The most important features are :
+```{r}
+names(sub_training[inImp,impFeatures[1:4]])
+```
+
+## Training
+
+Training by two model i) Random forest ii) k-nearest neighbors 
+```{r}
+#### Training by KNN
+ctrlKNN = trainControl(method = "adaptive_cv")
+modelKNN = train(classe ~ ., sub_training, method = "knn", trControl = ctrlKNN)
+resultsKNN = data.frame(modelKNN$results)
+#### publishing accuracy of KNN
+resultsKNN
+
+#### Training By Random Forest
+ctrlRF = trainControl(method = "oob")
+modelRF = train(classe ~ ., sub_training, method = "rf", ntree = 200, trControl = ctrlRF)
+resultsRF = data.frame(modelRF$results)
+#### publishing accuracy of Random Forest
+resultsRF
+```
+
+It seems that random forest give a larger accuracy compared to k-nearest neighbors
+
+## Testing Out-of-sample error
+
+Looking at confusion matrix between the KNN and RF models to see how much they agree on the test set, and then I compare each model using the test set outcomes.
+
+``` {r}
+#### fitting KNN models on sub_testing
+fitKNN = predict(modelKNN, sub_testing)
+#### fitting Random Forest models on sub_testing
+fitRF <- predict(modelRF, sub_testing)
+```
+### Comparision of Models using confusionMatrix
+
+RandomForest Versues Test Set
+```{r}
+confusionMatrix(fitRF,sub_testing$classe)
+```
+
+KNN Versues Test Set
+```{r}
+confusionMatrix(fitKNN,sub_testing$classe)
+```
+
+RandomForest Versus KNN
+```{r}
+confusionMatrix(fitRF,fitKNN)
+```
+
+The random forest fit is clearly more accurate than the k-nearest neighbors method with 99% accuracy as shown in above.
+
+### Submission
+
+Predicting the values for 20 testing data using Random Forest model. 
+``` {r}
+predict(modelRF, testing)
+```
+
